@@ -46,11 +46,10 @@ export const initNotesList = () => {
 
 /** @param {Element} notesList */
 export const initSidebar = (notesList) => {
-  const newNoteElement = dom.element('button', [], [dom.text('Create Note')])
-
+  const newNoteElement = dom.element('button', [], [dom.text('+1 Note')])
   newNoteElement.addEventListener('click', () => createNotes(1))
 
-  const new100NotesElement = dom.element('button', [], [dom.text('Create 100 Notes')])
+  const new100NotesElement = dom.element('button', [], [dom.text('+100 Notes')])
   new100NotesElement.addEventListener('click', () => createNotes(100))
 
   // sidebar
@@ -63,10 +62,10 @@ export const initSidebar = (notesList) => {
         dom.element('input', [pair.create('type', 'text'), pair.create('value', 'abcde'), pair.create('disabled', true)])
       ])
     ]),
+    newNoteElement,
+    new100NotesElement,
     dom.element('details', [pair.create('open', true)], [
       dom.element('summary', [], [dom.text('Notes')]),
-      newNoteElement,
-      new100NotesElement,
       notesList
     ])
   ]))
