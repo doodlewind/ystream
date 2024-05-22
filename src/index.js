@@ -1,21 +1,20 @@
 import * as isodb from 'isodb'
 import * as db from './db.js'
-import { Ydb } from './ydb.js'
-export { Ydb } from './ydb.js'
+import { Ystream } from './ystream.js'
+export { Ystream, Collection } from './ystream.js'
 
-export const deleteYdb = isodb.deleteDB
+export const remove = isodb.deleteDB
 
 /**
  * @param {string} dbname
- * @param {Array<{ owner: string, collection: string }>} collections
- * @param {import('./ydb.js').YdbConf} [conf]
+ * @param {import('./ystream.js').YstreamConf} [conf]
  */
-export const openYdb = async (dbname, collections, conf) => {
+export const open = async (dbname, conf) => {
   const { idb, isAuthenticated, user, deviceClaim } = await db.createDb(dbname)
-  const ydb = new Ydb(collections, dbname, idb, user, deviceClaim, conf)
+  const ystream = new Ystream(dbname, idb, user, deviceClaim, conf)
   if (isAuthenticated) {
-    ydb.isAuthenticated = true
-    ydb.emit('authenticate', [])
+    ystream.isAuthenticated = true
+    ystream.emit('authenticate', [])
   }
-  return ydb
+  return ystream
 }

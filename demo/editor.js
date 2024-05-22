@@ -8,7 +8,7 @@ import { keymap } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { owner } from './ydb/auth'
-import { y, collection } from './ydb/main'
+import { ystream, collectionName } from './ydb/main'
 
 /**
  * @type {{view: EditorView, ydoc: Y.Doc, unregisterHandlers: function():void} | null}
@@ -25,7 +25,8 @@ export const openDocumentInCodeMirror = (ydocname, yprops, editorDiv, editorDocn
   currentEditorState?.unregisterHandlers()
   currentEditorState?.view.destroy()
   currentEditorState?.ydoc.destroy()
-  const ydoc = y.getYdoc(owner, collection, ydocname)
+  const collection = ystream.getCollection(owner, collectionName)
+  const ydoc = collection.getYdoc(ydocname)
   const ytext = ydoc.getText()
   const state = EditorState.create({
     doc: ytext.toString(),

@@ -1,14 +1,16 @@
 /* eslint-env browser */
-import * as ydb from '@y/stream'
+import * as Ystream from '@y/stream'
 import * as wscomm from '@y/stream/comms/ws'
 import { initAuth, owner } from './auth.js'
 
-export const collection = 'my-notes-app'
-export const y = await ydb.openYdb('ydb-demo', [{ owner, collection }], {
-  comms: [new wscomm.WebSocketComm('ws://localhost:9000')]
+export const collectionName = 'my-notes-app'
+export const ystream = await Ystream.open('ydb-demo', {
+  comms: [new wscomm.WebSocketComm('ws://localhost:9000', [{ owner, collection: collectionName }])]
 })
 
-await initAuth(y)
+await initAuth(ystream)
 
-export const yroot = y.getYdoc(owner, collection, 'index')
+const collection = ystream.getCollection(owner, collectionName)
+export const yroot = collection.getYdoc('index')
+await yroot.whenLoaded
 export const ynotes = yroot.getArray('notes')

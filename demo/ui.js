@@ -6,7 +6,7 @@ import * as number from 'lib0/number'
 import * as random from 'lib0/random'
 import { style } from './style.js'
 import { owner } from './ydb/auth.js'
-import { collection, y, ynotes, yroot } from './ydb/main.js'
+import { collectionName, ystream, ynotes, yroot } from './ydb/main.js'
 import { openDocumentInCodeMirror } from './editor.js'
 
 // add some css
@@ -17,9 +17,10 @@ dom.appendChild(document.head || document.body, dom.element('style', [], [dom.te
  */
 const createNotes = n => {
   const notes = []
+  const collection = ystream.getCollection(owner, collectionName)
   for (let i = 0; i < n; i++) {
     const ynote = new Y.Map()
-    const ynoteContent = y.getYdoc(owner, collection, `#${ynotes.length + i}`)
+    const ynoteContent = collection.getYdoc(`#${ynotes.length + i}`)
     ynoteContent.getText().insert(0, `# Note #${ynotes.length + i}\nsome initial content`)
     ynote.set('name', `Note #${ynotes.length + i}`)
     ynote.set('content', ynoteContent)

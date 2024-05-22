@@ -11,10 +11,6 @@ import * as ecdsa from 'lib0/crypto/ecdsa'
  * - implement todo queue for requesting docs
  */
 
-/**
- * @typedef {import('./ydb.js').Ydb} Ydb
- */
-
 export const def = {
   tables: {
     oplog: {
@@ -40,6 +36,14 @@ export const def = {
           key: dbtypes.CollectionKey
         }
       }
+    },
+    /**
+     * Maps from parent_docid/child_docname => child_docid
+     * Useful for looking up docnames of children
+     */
+    childDocs: {
+      key: dbtypes.ParentKey,
+      value: isodb.StringValue
     },
     clocks: {
       key: dbtypes.ClocksKey,

@@ -18,7 +18,7 @@ import * as ecdsa from 'lib0/crypto/ecdsa'
 /**
  * @todo "owner" could be mapped to an integer
  * @todo client should actually be a map to a deviceid
- * @template {operations.OpTypes} [OP=any]
+ * @template {operations.OpTypes|operations.AbstractOp} [OP=operations.AbstractOp]
  * @implements isodb.IEncodable
  */
 export class OpValue {
@@ -36,6 +36,7 @@ export class OpValue {
     this.clock = clock
     this.owner = owner
     this.collection = collection
+    // @todo rename to docid to avoid resemblence to docname
     this.doc = doc
     this.op = op
   }
@@ -258,6 +259,10 @@ export class DeviceIdentity {
    */
   static decode (decoder) {
     decoding.readVarUint(decoder) // read a "type" byte that is reserved for future usage
+    /**
+     * @todo validate that the read key conforms to a specific format and doesn't allow to contain
+     * "junk" that could be used to generate keys for a specific hash
+     */
     const pkey = decoding.readVarString(decoder)
     return new DeviceIdentity(pkey)
   }
@@ -337,16 +342,29 @@ export class ClocksKey {
   }
 
   /**
+   * @param {{ owner: Uint8Array, collection:string }} prefix
+   */
+  static prefix ({ owner, collection }) {
+    return encoding.encode(encoder => {
+      encoding.writeUint8(encoder, 3)
+      if (owner) {
+        encoding.writeVarUint8Array(encoder, owner)
+        encoding.writeVarString(encoder, collection)
+      }
+    })
+  }
+
+  /**
    * @param {encoding.Encoder} encoder
    */
   encode (encoder) {
     const info = (this.owner ? 1 : 0) | (this.collection ? 2 : 0)
     encoding.writeUint8(encoder, info)
-    encoding.writeUint32(encoder, this.clientid)
     if (this.owner) {
       encoding.writeVarUint8Array(encoder, this.owner)
       this.collection && encoding.writeVarString(encoder, this.collection)
     }
+    encoding.writeUint32(encoder, this.clientid)
   }
 
   /**
@@ -355,9 +373,9 @@ export class ClocksKey {
    */
   static decode (decoder) {
     const info = decoding.readUint8(decoder)
-    const clientid = decoding.readUint32(decoder)
     const owner = (info & 1) > 0 ? decoding.readVarUint8Array(decoder) : null
     const collection = (info & 2) > 0 ? decoding.readVarString(decoder) : null
+    const clientid = decoding.readUint32(decoder)
     return new ClocksKey(clientid, owner, collection)
   }
 }
@@ -496,5 +514,67 @@ export class NoPermissionIndexKey {
     const doc = decoding.readVarString(decoder)
     const clock = decoding.readUint32BigEndian(decoder)
     return new NoPermissionIndexKey(owner, collection, doc, clock)
+  }
+}
+
+/**
+ * @implements isodb.IEncodable
+ */
+export class ParentKey {
+  /**
+   * @param {Uint8Array} owner
+   * @param {string} collection
+   * @param {string} parent
+   * @param {string} childname
+   * @param {number} localClock
+   */
+  constructor (owner, collection, parent, childname, localClock) {
+    if (parent == null) {
+      console.warn('unexpected parent=undefined')
+      debugger
+    }
+    this.owner = owner
+    this.collection = collection
+    this.parent = parent
+    this.childname = childname
+    this.localClock = localClock
+  }
+
+  /**
+   * @param {{ owner: Uint8Array, collection: string, parent: string, docname?: string }} prefix
+   */
+  static prefix ({ owner, collection, parent, docname }) {
+    return encoding.encode(encoder => {
+      encoding.writeVarUint8Array(encoder, owner)
+      encoding.writeVarString(encoder, collection)
+      encoding.writeVarString(encoder, parent)
+      if (docname != null) {
+        encoding.writeTerminatedString(encoder, docname)
+      }
+    })
+  }
+
+  /**
+   * @param {encoding.Encoder} encoder
+   */
+  encode (encoder) {
+    encoding.writeVarUint8Array(encoder, this.owner)
+    encoding.writeVarString(encoder, this.collection)
+    encoding.writeVarString(encoder, this.parent)
+    encoding.writeTerminatedString(encoder, this.childname)
+    encoding.writeVarUint(encoder, this.localClock)
+  }
+
+  /**
+   * @param {decoding.Decoder} decoder
+   * @return {isodb.IEncodable}
+   */
+  static decode (decoder) {
+    const owner = decoding.readVarUint8Array(decoder)
+    const collection = decoding.readVarString(decoder)
+    const doc = decoding.readVarString(decoder)
+    const childname = decoding.readTerminatedString(decoder)
+    const localClock = decoding.readVarUint(decoder)
+    return new this(owner, collection, doc, childname, localClock)
   }
 }

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "demo": "npm run clean && rollup -c && concurrently '0serve -o ./demo/index.html' 'rollup -wc' 'npm run ws-server'",
-    "clean": "rm -rf dist .ydb-websocket-server .test_dbs",
+    "clean": "rm -rf dist .ystream .test_dbs tmp",
     "types": "tsc",
     "gentesthtml": "npx 0gentesthtml --script ./tests/index.js > test.html",
     "debug:browser": "npm run gentesthtml && npx 0serve -o test.html",
@@ -51,10 +51,19 @@
     "./api/dbtypes": {
       "types": "./dist/src/dbtypes.d.ts",
       "default": "./src/dbtypes.js"
+    },
+    "./api/actions": {
+      "types": "./dist/src/actions.d.ts",
+      "default": "./src/actions.js"
+    },
+    "./fs": {
+      "types": "./dist/src/extensions/fs.d.ts",
+      "default": "./src/extensions/fs.js"
     }
   },
   "bin": {
-    "ystream-server": "./bin/server.js"
+    "ystream-server": "./bin/server.js",
+    "yfs": "./bin/yfs.js"
   },
   "files": [
     "dist",
@@ -103,6 +112,7 @@
     "yjs": "^13.5.43"
   },
   "optionalDependencies": {
+    "chokidar": "^3.6.0",
     "uws": "github:uNetworking/uWebSockets.js#v20.43.0",
     "ws": "^8.14.1"
   }

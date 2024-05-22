@@ -4,11 +4,12 @@
 
 import * as error from 'lib0/error'
 import * as utils from './utils.js'
+import * as observable from 'lib0/observable'
 
 // @todo rename all interfacses to have I* prefix.
 
 /**
- * @typedef {import('./ydb.js').Ydb} Ydb
+ * @typedef {import('./ystream.js').Ystream} Ystream
  */
 
 /**
@@ -18,9 +19,11 @@ import * as utils from './utils.js'
 /* c8 ignore start */
 /**
  * Interface that describes a communication channel.
+ *
  * @interface
+ * @extends observable.ObservableV2<{ authenticated: (comm:Comm) => void }>
  */
-export class Comm {
+export class Comm extends observable.ObservableV2 {
   get clientid () { return -1 }
   set clientid (_v) { error.methodUnimplemented() }
   /**
@@ -47,9 +50,11 @@ export class Comm {
   get isDestroyed () { return false }
   get isAuthenticated () { return false }
   set isAuthenticated (_v) { error.methodUnimplemented() }
+  get sentChallengeAnswer () { return false }
+  set sentChallengeAnswer (_v) { error.methodUnimplemented() }
 
   /**
-   * @type {WritableStream<Array<Uint8Array|import('./dbtypes.js').OpValue>>}
+   * @type {WritableStream<{ messages: Array<Uint8Array|import('./dbtypes.js').OpValue>, origin: any }>}
    */
   get writer () { return error.methodUnimplemented() }
   /**
@@ -75,10 +80,10 @@ export class CommHandler {
  */
 export class CommConfiguration {
   /**
-   * @param {Ydb} _ydb
+   * @param {Ystream} _ystream
    * @return {CommHandler}
    */
-  init (_ydb) {
+  init (_ystream) {
     error.methodUnimplemented()
   }
 }

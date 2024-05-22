@@ -7,11 +7,14 @@ import { ObservableV2 } from 'lib0/observable'
 import * as math from 'lib0/math'
 import * as comm from '../comm.js' // eslint-disable-line
 import * as logging from 'lib0/logging'
-import { Ydb } from '../ydb.js' // eslint-disable-line
+import { Ystream } from '../ystream.js' // eslint-disable-line
 import * as webcrypto from 'lib0/webcrypto'
 import * as utils from '../utils.js'
 import * as promise from 'lib0/promise'
 import * as dbtypes from '../dbtypes.js' // eslint-disable-line
+import * as map from 'lib0/map'
+import * as buffer from 'lib0/buffer'
+import * as actions from '../actions.js'
 
 const _log = logging.createModuleLogger('@y/stream/websocket')
 /**
@@ -19,7 +22,7 @@ const _log = logging.createModuleLogger('@y/stream/websocket')
  * @param {string} type
  * @param {...any} args
  */
-const log = (comm, type, ...args) => _log(logging.PURPLE, `(local=${comm.ydb.clientid.toString(36).slice(0, 4)},remote=${comm.clientid.toString(36).slice(0, 4)}) `, logging.ORANGE, '[' + type + '] ', logging.GREY, ...args.map(arg => typeof arg === 'function' ? arg() : arg))
+const log = (comm, type, ...args) => _log(logging.PURPLE, `(local=${comm.ystream.clientid.toString(36).slice(0, 4)},remote=${comm.clientid.toString(36).slice(0, 4)}) `, logging.ORANGE, '[' + type + '] ', logging.GREY, ...args.map(arg => typeof arg === 'function' ? arg() : arg))
 
 /**
  * @param {WebSocketCommInstance} comm
@@ -35,7 +38,8 @@ const addReadMessage = async (comm, m) => {
    */
   let currMessage
   while ((currMessage = readMessageQueue.start?.v) != null) {
-    const reply = await protocol.readMessage(encoding.createEncoder(), decoding.createDecoder(currMessage), comm.ydb, comm)
+    log(comm, 'read message', { clientid: comm.clientid, len: currMessage.length })
+    const reply = await protocol.readMessage(encoding.createEncoder(), decoding.createDecoder(currMessage), comm.ystream, comm)
     if (reply) {
       comm.send(encoding.toUint8Array(reply))
     }
@@ -45,21 +49,24 @@ const addReadMessage = async (comm, m) => {
 
 /**
  * @implements comm.Comm
+ * @extends {ObservableV2<{ authenticated: (comm:WebSocketCommInstance) => void }>}
  */
-class WebSocketCommInstance {
+class WebSocketCommInstance extends ObservableV2 {
   /**
    * @param {WebSocketHandlerInstance} handler
    */
   constructor (handler) {
-    const { ydb, url } = handler
+    super()
+    const { ystream, url } = handler
     this.handler = handler
     this.synced = new utils.CollectionsSet()
     this.isDestroyed = false
     this.comm = true
-    this.ydb = ydb
+    this.ystream = ystream
     this.url = url
     this.clientid = -1
     this.isAuthenticated = false
+    this.sentChallengeAnswer = false
     /**
      * @type {import('../dbtypes.js').UserIdentity|null}
      */
@@ -78,32 +85,47 @@ class WebSocketCommInstance {
     this._readMessageQueue = queue.create()
     this.streamController = new AbortController()
     this.wsconnected = false
+    const randomIdentifier = Math.random() // @todo remove
     /**
-     * @type {WritableStream<Array<Uint8Array|dbtypes.OpValue>>}
+     * @type {WritableStream<{ messages: Array<Uint8Array|dbtypes.OpValue>, origin: any }>}
      */
     this.writer = new WritableStream({
-      write: (message) => {
+      write: ({ messages, origin }) => {
         if (!this.wsconnected) {
           return this.destroy()
         }
+        if (origin === this) return // skep messages received from this communication channel
+        log(this, 'sending ops', () => `buffered amount=${this.ws?.bufferedAmount}, `, () => { return `number of ops=${messages.length}, first=` }, () => {
+          const m = messages[0]
+          if (m instanceof dbtypes.OpValue) {
+            const { clock, localClock, client } = m
+            return { clock, localClock, client, randomIdentifier }
+          } else {
+            return 'control message'
+          }
+        })
         const encodedMessage = encoding.encode(encoder => {
-          for (let i = 0; i < message.length; i++) {
-            const m = message[i]
+          for (let i = 0; i < messages.length; i++) {
+            const m = messages[i]
             if (m instanceof Uint8Array) {
               encoding.writeUint8Array(encoder, m)
             } else {
-              protocol.writeOps(encoder, /** @type {Array<dbtypes.OpValue>} */ (message))
+              let len = 1
+              for (; i + len < messages.length && messages[i + len] instanceof dbtypes.OpValue; len++) { /* nop */ }
+              protocol.writeOps(encoder, /** @type {Array<dbtypes.OpValue>} */ (messages.slice(i, i + len)))
+              i += len - 1
             }
           }
         })
-        this.ws.send(encodedMessage)
+        this.send(encodedMessage)
         const maxBufferedAmount = 3000_000
         if ((this.ws?.bufferedAmount || 0) > maxBufferedAmount) {
-          return promise.until(100, () => (this.ws?.bufferedAmount || 0) < maxBufferedAmount)
+          // @todo make timeout (30000ms) configurable
+          return promise.until(30000, () => (this.ws?.bufferedAmount || 0) < maxBufferedAmount)
         }
       }
     })
-    ydb.comms.add(this)
+    ystream.comms.add(this)
     const ws = new WS(url)
     this.ws = ws
     ws.binaryType = 'arraybuffer'
@@ -116,24 +138,45 @@ class WebSocketCommInstance {
     }
     ws.onclose = (event) => {
       handler.emit('status', [{
-        status: 'disconnected'
+        status: 'disconnected',
+        comm: this
       }, handler])
-      this.destroy()
       handler.emit('connection-close', [/** @type {any} */(event), handler])
       log(this, 'close', 'close-code: ', event.code)
+      if (this.handler.comm === this) {
+        this.handler._setupNewComm()
+      }
+      this.destroy()
     }
     ws.onopen = () => {
       log(this, 'open')
       this.wsconnected = true
       handler.wsUnsuccessfulReconnects = 0
-      ws.send(encoding.encode(encoder => protocol.writeInfo(encoder, ydb, this)))
+      this.send(encoding.encode(encoder => protocol.writeInfo(encoder, ystream, this)))
       handler.emit('status', [{
-        status: 'connected'
+        status: 'connected',
+        comm: this
       }, handler])
     }
     handler.emit('status', [{
-      status: 'connecting'
+      status: 'connecting',
+      comm: this
     }, handler])
+    this.on('authenticated', async () => {
+      const encoder = encoding.createEncoder()
+      await ystream.transact(() =>
+        promise.all(map.map(ystream.collections, (cols, _owner) => {
+          const owner = buffer.fromBase64(_owner)
+          return promise.all(map.map(cols, (_, collection) =>
+            actions.getClock(ystream, this.clientid, owner, collection).then(clock => {
+              protocol.writeRequestOps(encoder, owner, collection, clock)
+              return clock
+            })
+          ))
+        }))
+      )
+      this.send(encoding.toUint8Array(encoder))
+    })
   }
 
   /**
@@ -143,6 +186,7 @@ class WebSocketCommInstance {
    */
   send (message) {
     if (this.ws && this.wsconnected) {
+      log(this, 'sending message', `Message len: ${message.length}`)
       // @todo handle the case that message could not be sent
       this.ws.send(message)
       return
@@ -151,34 +195,35 @@ class WebSocketCommInstance {
   }
 
   destroy () {
-    console.log('destroyed comm')
-    debugger
+    super.destroy()
+    this.handler.comm = null
     this.ws.close()
     this.isDestroyed = true
-    this.ydb.comms.delete(this)
+    this.ystream.comms.delete(this)
     this._readMessageQueue = queue.create()
     this.streamController.abort('destroyed')
     if (this.wsconnected) {
       this.handler.wsUnsuccessfulReconnects++
     }
     this.wsconnected = false
-    this.handler._setupNewComm()
   }
 }
 
 /**
  * @implements comm.CommHandler
- * @extends ObservableV2<{ synced: function(WebSocketHandlerInstance):any, "connection-error": function(ErrorEvent, WebSocketHandlerInstance):any, "connection-close": function(CloseEvent, WebSocketHandlerInstance):any, status: function({ status: 'connecting'|'connected'|'disconnected' }, WebSocketHandlerInstance):any }>
+ * @extends ObservableV2<{ synced: function(WebSocketHandlerInstance):any, "connection-error": function(ErrorEvent, WebSocketHandlerInstance):any, "connection-close": function(CloseEvent, WebSocketHandlerInstance):any, status: function({ status: 'connecting'|'connected'|'disconnected', comm: WebSocketCommInstance }, WebSocketHandlerInstance):any }>
  */
 class WebSocketHandlerInstance extends ObservableV2 {
   /**
-   * @param {import('../ydb.js').Ydb} ydb
+   * @param {import('../ystream.js').Ystream} ystream
    * @param {string} url
+   * @param {Array<{ owner: string, collection: string }>} collections
    */
-  constructor (ydb, url) {
+  constructor (ystream, url, collections) {
     super()
-    this.ydb = ydb
+    this.ystream = ystream
     this.url = url
+    this.collections = collections
     this.shouldConnect = true
     this.wsUnsuccessfulReconnects = 0
     this.maxBackoffTime = 60000
@@ -192,9 +237,12 @@ class WebSocketHandlerInstance extends ObservableV2 {
   }
 
   _setupNewComm () {
+    if (!this.shouldConnect) return
+    this.comm?.destroy()
     // Start with no reconnect timeout and increase timeout by
     // using exponential backoff starting with 100ms
     const setup = () => {
+      this.comm?.destroy()
       if (this.shouldConnect) {
         this.comm = new WebSocketCommInstance(this)
       }
@@ -225,15 +273,17 @@ class WebSocketHandlerInstance extends ObservableV2 {
 export class WebSocketComm {
   /**
    * @param {string} url
+   * @param {Array<{ owner: string, collection: string }>} collections
    */
-  constructor (url) {
+  constructor (url, collections) {
     this.url = url
+    this.collections = collections
   }
 
   /**
-   * @param {Ydb} ydb
+   * @param {Ystream} ystream
    */
-  init (ydb) {
-    return new WebSocketHandlerInstance(ydb, this.url)
+  init (ystream) {
+    return new WebSocketHandlerInstance(ystream, this.url, this.collections)
   }
 }
